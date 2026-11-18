@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
@@ -47,6 +46,8 @@ class ReminderService {
   static const _dailyNotificationId = 4100;
   static const _firstRiskNotificationId = 4200;
   static const _lastRiskNotificationId = 4227;
+  static const _testNowNotificationId = 4300;
+  static const _testLaterNotificationId = 4301;
   static const _dailyTitle = 'Time for your check-in';
   static const _dailyBody = 'A moment for yourself.';
   static const _riskTitle = 'A moment for yourself';
@@ -77,14 +78,7 @@ class ReminderService {
     if (!isSupported || _initialized) return;
 
     tz_data.initializeTimeZones();
-    try {
-      final localTimezone = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(localTimezone.identifier));
-    } catch (e) {
-      debugPrint(
-          'Could not read the device timezone; using Africa/Kampala: $e');
-      tz.setLocalLocation(tz.getLocation('Africa/Kampala'));
-    }
+    tz.setLocalLocation(tz.getLocation('Africa/Kampala'));
 
     const initializationSettings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
@@ -92,6 +86,16 @@ class ReminderService {
     await _plugin.initialize(
       settings: initializationSettings,
       onDidReceiveNotificationResponse: _handleNotificationResponse,
+    );
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await android?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        'steady_recovery_reminders',
+        'Reminders',
+        description: 'Private check-in and supportive reminders',
+        importance: Importance.high,
+      ),
     );
 
     final launchDetails = await _plugin.getNotificationAppLaunchDetails();
@@ -150,6 +154,88 @@ class ReminderService {
     return await android?.areNotificationsEnabled() ?? false;
   }
 
+  static Future<bool> exactAlarmsEnabled() async {
+    if (!isSupported) return false;
+    await initialize();
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    return await android?.canScheduleExactNotifications() ?? false;
+  }
+
+  static Future<bool> requestExactAlarmsPermission() async {
+    if (!isSupported) return false;
+    await initialize();
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (android == null) return false;
+    if (await android.canScheduleExactNotifications() == true) return true;
+    await android.requestExactAlarmsPermission();
+    return await android.canScheduleExactNotifications() ?? false;
+  }
+
+  static Future<int> scheduledReminderCount() async {
+    if (!isSupported) return 0;
+    await initialize();
+    final requests = await _plugin.pendingNotificationRequests();
+    return requests
+        .where((request) =>
+            request.id >= _dailyNotificationId &&
+            request.id <= _lastRiskNotificationId)
+        .length;
+  }
+
+  static Future<void> sendTestNotificationNow() async {
+    if (!isSupported) {
+      throw StateError('Test notifications are available on Android only.');
+    }
+    if (!await requestNotificationPermission()) {
+      throw StateError(
+          'Notifications are blocked. Allow them in phone settings.');
+    }
+    await _plugin.show(
+      id: _testNowNotificationId,
+      title: 'A moment for yourself',
+      body: 'Your notification is ready.',
+      notificationDetails: _notificationDetails,
+    );
+  }
+
+  static Future<void> scheduleTestNotificationInOneMinute() async {
+    if (!isSupported) {
+      throw StateError('Test notifications are available on Android only.');
+    }
+    if (!await requestNotificationPermission()) {
+      throw StateError(
+          'Notifications are blocked. Allow them in phone settings.');
+    }
+    await requestExactAlarmsPermission();
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    final scheduledDate = tz.TZDateTime.now(tz.local).add(
+      const Duration(minutes: 1),
+    );
+    await _plugin.zonedSchedule(
+      id: _testLaterNotificationId,
+      title: 'A moment for yourself',
+      body: 'Your notification is ready.',
+      scheduledDate: scheduledDate,
+      notificationDetails: _notificationDetails,
+      androidScheduleMode: await _scheduleMode(android),
+    );
+  }
+
+  static Future<void> openPhoneSettings() async {
+    if (!isSupported) {
+      throw StateError(
+          'Phone notification settings are available on Android only.');
+    }
+    await initialize();
+    final opened = await _plugin.openAppNotificationSettings();
+    if (opened != true) {
+      throw StateError('Could not open phone notification settings.');
+    }
+  }
+
   static Future<void> saveSettings({
     required String userId,
     required bool dailyReminderEnabled,
@@ -157,11 +243,13 @@ class ReminderService {
     required int dailyReminderMinute,
   }) async {
     await initialize();
-    if ((dailyReminderEnabled || riskyReminderEnabled) &&
-        !await requestNotificationPermission()) {
-      throw StateError(
-        'Notifications are off. Allow notifications in Android settings to turn on reminders.',
-      );
+    if (dailyReminderEnabled || riskyReminderEnabled) {
+      if (!await requestNotificationPermission()) {
+        throw StateError(
+          'Notifications are off. Allow notifications in Android settings to turn on reminders.',
+        );
+      }
+      await requestExactAlarmsPermission();
     }
 
     final prefs = await SharedPreferences.getInstance();
@@ -178,8 +266,8 @@ class ReminderService {
     if (!isSupported) return;
 
     final prefs = await SharedPreferences.getInstance();
-    var enableDaily = prefs.getBool(_key(userId, 'daily_enabled')) ?? false;
-    var enableRisky = prefs.getBool(_key(userId, 'risky_enabled')) ?? false;
+    final enableDaily = prefs.getBool(_key(userId, 'daily_enabled')) ?? false;
+    final enableRisky = prefs.getBool(_key(userId, 'risky_enabled')) ?? false;
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     final allowed = await android?.areNotificationsEnabled() ?? false;
@@ -187,14 +275,35 @@ class ReminderService {
     await _cancelScheduledNotifications();
     if (!allowed) return;
 
+    final scheduleMode = await _scheduleMode(android);
     if (enableDaily) {
-      await _scheduleDaily(await dailyMinuteOfDay(userId));
+      await _scheduleDaily(await dailyMinuteOfDay(userId), scheduleMode);
     }
     if (enableRisky) {
       for (final window in windows) {
-        await _scheduleRiskyWindow(window);
+        await _scheduleRiskyWindow(window, scheduleMode);
       }
     }
+  }
+
+  static const NotificationDetails _notificationDetails = NotificationDetails(
+    android: AndroidNotificationDetails(
+      'steady_recovery_reminders',
+      'Reminders',
+      channelDescription: 'Private check-in and supportive reminders',
+      importance: Importance.high,
+      priority: Priority.high,
+    ),
+  );
+
+  static Future<AndroidScheduleMode> _scheduleMode(
+    AndroidFlutterLocalNotificationsPlugin? android,
+  ) async {
+    final exactAllowed =
+        await android?.canScheduleExactNotifications() ?? false;
+    return exactAllowed
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.inexactAllowWhileIdle;
   }
 
   static Future<void> refreshOnAppOpen(String userId) async {
@@ -280,7 +389,10 @@ class ReminderService {
     return windows.take(3).toList();
   }
 
-  static Future<void> _scheduleDaily(int minuteOfDay) async {
+  static Future<void> _scheduleDaily(
+    int minuteOfDay,
+    AndroidScheduleMode scheduleMode,
+  ) async {
     final now = tz.TZDateTime.now(tz.local);
     var next = tz.TZDateTime(
       tz.local,
@@ -297,22 +409,17 @@ class ReminderService {
       title: _dailyTitle,
       body: _dailyBody,
       scheduledDate: next,
-      notificationDetails: const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'steady_recovery_reminders',
-          'Reminders',
-          channelDescription: 'Private check-in and supportive reminders',
-          importance: Importance.defaultImportance,
-          priority: Priority.defaultPriority,
-        ),
-      ),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      notificationDetails: _notificationDetails,
+      androidScheduleMode: scheduleMode,
       matchDateTimeComponents: DateTimeComponents.time,
       payload: '/check-in',
     );
   }
 
-  static Future<void> _scheduleRiskyWindow(RiskyWindow window) async {
+  static Future<void> _scheduleRiskyWindow(
+    RiskyWindow window,
+    AndroidScheduleMode scheduleMode,
+  ) async {
     final now = tz.TZDateTime.now(tz.local);
     var notifyAt = _nextWeekdayTime(
       now,
@@ -329,16 +436,8 @@ class ReminderService {
       title: _riskTitle,
       body: _riskBody,
       scheduledDate: notifyAt,
-      notificationDetails: const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'steady_recovery_reminders',
-          'Reminders',
-          channelDescription: 'Private check-in and supportive reminders',
-          importance: Importance.defaultImportance,
-          priority: Priority.defaultPriority,
-        ),
-      ),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      notificationDetails: _notificationDetails,
+      androidScheduleMode: scheduleMode,
       matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
       payload: '/sos',
     );

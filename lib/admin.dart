@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'common.dart';
+import 'widgets/app_drawer.dart';
 
 class AdminDash extends StatefulWidget {
   const AdminDash({super.key});
@@ -42,7 +43,19 @@ class _AdminDashState extends State<AdminDash> {
           title: Text(_selectedIndex == 0
               ? 'Admin - Doctor verification'
               : 'Admin - Patients'),
+          showDrawerMenu: true,
           actions: [logoutBtn(c)]),
+      drawer: AppDrawer(
+        pageContext: c,
+        onAdminVerifications: () => setState(() {
+          _selectedIndex = 0;
+          f = _load();
+        }),
+        onAdminPatients: () => setState(() {
+          _selectedIndex = 1;
+          f = _loadPatients();
+        }),
+      ),
       body: FutureBuilder(
           future: f,
           builder: (_, s) {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'common.dart';
 import 'reminders.dart';
+import 'widgets/app_drawer.dart';
 
 class Splash extends StatefulWidget {
   const Splash({super.key});
@@ -261,30 +262,147 @@ class _RegisterState extends State<Register> {
       ]));
 }
 
-class Pending extends StatelessWidget {
+class Pending extends StatefulWidget {
   const Pending({super.key});
+
   @override
-  Widget build(BuildContext c) => Scaffold(
-      appBar: brandAppBar(actions: [logoutBtn(c)]),
-      body: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            const Icon(Icons.hourglass_top, size: 80, color: sage),
-            const SizedBox(height: 16),
-            const Text('Verification pending',
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(
-                me?['verification_status'] == 'REJECTED'
-                    ? 'Your application was not approved.'
-                    : 'An administrator is reviewing your credentials. Clinical tools unlock once approved.',
-                textAlign: TextAlign.center),
-            const SizedBox(height: 24),
-            FilledButton(
-                onPressed: () async {
-                  await loadMe();
-                  if (c.mounted) c.go(homeFor(me!));
-                },
-                child: const Text('Check status')),
-          ])));
+  State<Pending> createState() => _PendingState();
+}
+
+class _PendingState extends State<Pending> with WidgetsBindingObserver {
+  late String _status = '${me?['verification_status'] ?? 'PENDING'}';
+  bool _isRefreshing = false;
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => _refresh(showFeedback: false),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refresh(showFeedback: false);
+    }
+  }
+
+  Future<void> _refresh({required bool showFeedback}) async {
+    if (_isRefreshing) return;
+    setState(() {
+      _isRefreshing = true;
+    });
+    try {
+      await loadMe();
+      if (!mounted) return;
+      final profile = me;
+      if (profile == null) {
+        snack(context, 'Could not load your profile. Please sign in again.');
+        return;
+      }
+      final status = '${profile['verification_status'] ?? 'PENDING'}';
+      setState(() {
+        _status = status;
+      });
+      if (status == 'APPROVED') {
+        snack(context, 'Approved! Opening your dashboard');
+        context.go('/doctor/dashboard');
+      } else if (status == 'PENDING' && showFeedback) {
+        snack(context,
+            'Still pending. We will email you when a decision is made');
+      } else if (status == 'REJECTED' && showFeedback) {
+        snack(
+            context, 'Your application was rejected. You can sign out below.');
+      }
+    } catch (e) {
+      if (mounted) snack(context, 'Could not check verification status: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: brandAppBar(
+          title: const Text('Doctor verification'),
+          actions: [logoutBtn(context)],
+          showDrawerMenu: true,
+        ),
+        drawer: AppDrawer(
+          pageContext: context,
+          onRefresh: () => _refresh(showFeedback: true),
+        ),
+        body: RefreshIndicator(
+          onRefresh: () => _refresh(showFeedback: false),
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(28),
+            children: [
+              const SizedBox(height: 48),
+              Icon(
+                _status == 'REJECTED'
+                    ? Icons.cancel_outlined
+                    : Icons.hourglass_top,
+                size: 80,
+                color: _status == 'REJECTED' ? danger : sage,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Status: $_status',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _status == 'REJECTED'
+                    ? 'Your application was not approved. Please sign out or contact support if you believe this is an error.'
+                    : _status == 'APPROVED'
+                        ? 'Your credentials are approved.'
+                        : 'An administrator is reviewing your credentials. Clinical tools unlock once approved.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed:
+                    _isRefreshing ? null : () => _refresh(showFeedback: true),
+                child: _isRefreshing
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Check status'),
+              ),
+              if (_status == 'REJECTED') ...[
+                const SizedBox(height: 12),
+                OutlinedButton(
+                  onPressed: () => signOut(context),
+                  child: const Text('Sign out'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
 }

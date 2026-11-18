@@ -30,22 +30,30 @@ final router = GoRouter(
     final p = s.matchedLocation;
     if (['/splash', '/', '/login', '/register'].contains(p)) return null;
     if (me == null) return '/';
-    final h = homeFor(me!);
     final role = me!['role'];
-    final ok = role == 'PATIENT'
-        ? [
-            '/dashboard',
-            '/check-in',
-            '/sos',
-            '/groups',
-            '/tools',
-            '/settings',
-            '/blueprint'
-          ].contains(p)
-        : role == 'DOCTOR'
-            ? p == h
-            : p.startsWith('/admin');
-    return ok ? null : h; // route isolation (FR2)
+    if (role == 'PATIENT') {
+      const patientRoutes = {
+        '/dashboard',
+        '/check-in',
+        '/sos',
+        '/groups',
+        '/tools',
+        '/settings',
+        '/blueprint',
+      };
+      return patientRoutes.contains(p) ? null : homeFor(me!);
+    }
+    if (role == 'DOCTOR') {
+      final approved = me!['verification_status'] == 'APPROVED';
+      if (approved) {
+        return p == '/doctor/dashboard' ? null : '/doctor/dashboard';
+      }
+      return p == '/doctor/pending' ? null : '/doctor/pending';
+    }
+    if (role == 'ADMIN') {
+      return p == '/admin/dashboard' ? null : '/admin/dashboard';
+    }
+    return '/';
   },
   routes: [
     GoRoute(path: '/splash', builder: (c, s) => const Splash()),

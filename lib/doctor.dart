@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'common.dart';
+import 'widgets/app_drawer.dart';
 
 class DoctorDash extends StatefulWidget {
   const DoctorDash({super.key});
@@ -80,6 +81,7 @@ class _DoctorDashState extends State<DoctorDash> {
             title: Text(selectedIndex == 0
                 ? 'Clinical Command Center'
                 : 'Pending follow-up'),
+            showDrawerMenu: true,
             actions: [
               IconButton(
                   icon: const Icon(Icons.refresh),
@@ -88,6 +90,12 @@ class _DoctorDashState extends State<DoctorDash> {
                       })),
               logoutBtn(c)
             ]),
+        drawer: AppDrawer(
+          pageContext: c,
+          onRefresh: () => setState(() {
+            f = _load();
+          }),
+        ),
         body: FutureBuilder(
             future: f,
             builder: (_, s) {

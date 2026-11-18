@@ -44,11 +44,12 @@ AppBar brandAppBar({
   Widget? title,
   List<Widget>? actions,
   VoidCallback? onBack,
+  bool showDrawerMenu = false,
 }) =>
     AppBar(
       automaticallyImplyLeading: false,
       leading: onBack == null
-          ? null
+          ? (showDrawerMenu ? drawerMenuButton() : null)
           : IconButton(
               tooltip: 'Back',
               onPressed: onBack,
@@ -64,7 +65,18 @@ AppBar brandAppBar({
           ],
         ],
       ),
-      actions: actions,
+      actions: [
+        ...?actions,
+        if (showDrawerMenu && onBack != null) drawerMenuButton(),
+      ],
+    );
+
+Widget drawerMenuButton() => Builder(
+      builder: (context) => IconButton(
+        tooltip: 'Open menu',
+        icon: const Icon(Icons.menu),
+        onPressed: () => Scaffold.of(context).openDrawer(),
+      ),
     );
 
 ThemeData theme() => ThemeData(

@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'common.dart';
+import 'report.dart';
+import 'widgets/app_drawer.dart';
 
 const _muted = Color(0xFF6B7D6F);
 
@@ -276,6 +278,11 @@ class _CopingPlanScreenState extends State<CopingPlanScreen> {
             onPressed: () => context.go(widget.returnRoute),
           ),
           title: Text('Coping plan', style: _heading(22)),
+          actions: [drawerMenuButton()],
+        ),
+        drawer: AppDrawer(
+          pageContext: context,
+          onGenerateReport: () => reportSheet(context),
         ),
         body: _loading
             ? const Center(child: CircularProgressIndicator())

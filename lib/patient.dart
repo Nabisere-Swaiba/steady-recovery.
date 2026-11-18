@@ -2,12 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'blueprint.dart';
 import 'common.dart';
+import 'report.dart';
 import 'reminders.dart';
+import 'widgets/app_drawer.dart';
 
 const muted = Color(0xFF6B7D6F);
 TextStyle serif([double s = 26]) => GoogleFonts.lora(fontSize: s, color: ink);
@@ -37,91 +37,6 @@ Widget head(String eyebrow, String title, String sub) => Padding(
 Future<void> call(String url) =>
     launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
 
-// ---------- Reports ----------
-Future<void> reportSheet(BuildContext c) => showModalBottomSheet(
-    context: c,
-    builder: (_) => SafeArea(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('Generate a report', style: serif(22))),
-          for (final p in [
-            ['Daily', 1],
-            ['Weekly', 7],
-            ['Monthly', 30]
-          ])
-            ListTile(
-                leading: const Icon(Icons.description_outlined),
-                title: Text('${p[0]} report'),
-                onTap: () {
-                  Navigator.pop(c);
-                  _report(c, p[0] as String, p[1] as int);
-                }),
-        ])));
-
-Future<void> _report(BuildContext c, String label, int days) async {
-  try {
-    final since = DateTime.now()
-        .subtract(Duration(days: days - 1))
-        .toIso8601String()
-        .substring(0, 10);
-    final rows = List<Map<String, dynamic>>.from(await db
-        .from('checkins')
-        .select()
-        .eq('user_id', me!['id'])
-        .gte('checkin_date', since)
-        .order('checkin_date'));
-    String j(x) => (x as List?)?.join(', ') ?? '';
-    final avg = rows.isEmpty
-        ? 0.0
-        : rows.map((r) => (r['craving'] as num?) ?? 0).reduce((a, b) => a + b) /
-            rows.length;
-    final doc = pw.Document();
-    doc.addPage(pw.MultiPage(
-        build: (_) => [
-              pw.Text('SteadyRecovery - $label check-in report',
-                  style: pw.TextStyle(
-                      fontSize: 20, fontWeight: pw.FontWeight.bold)),
-              pw.Text(
-                  '${me!['full_name']}  |  $since to ${DateTime.now().toIso8601String().substring(0, 10)}'),
-              pw.SizedBox(height: 10),
-              pw.Text(
-                  'Check-ins: ${rows.length}    Average intensity: ${avg.toStringAsFixed(1)}/10'),
-              pw.SizedBox(height: 10),
-              if (rows.isEmpty)
-                pw.Text('No check-ins in this period.')
-              else
-                pw.TableHelper.fromTextArray(
-                    headers: [
-                      'Date',
-                      'Intensity',
-                      'Inside',
-                      'Around',
-                      'Helped',
-                      'HALT',
-                      'Note'
-                    ],
-                    data: rows
-                        .map((r) => [
-                              r['checkin_date'],
-                              '${r['craving']}/10',
-                              j(r['inside']),
-                              j(r['around']),
-                              j(r['helped']),
-                              j(r['halt']),
-                              r['note'] ?? ''
-                            ])
-                        .toList(),
-                    cellStyle: const pw.TextStyle(fontSize: 8)),
-            ]));
-    await Printing.layoutPdf(
-        name: 'steadyrecovery_${label.toLowerCase()}_report.pdf',
-        onLayout: (_) async => doc.save());
-  } catch (e) {
-    if (c.mounted) snack(c, 'Report failed: $e');
-  }
-}
-
 // ---------- Shell: bottom nav + drawer ----------
 class Shell extends StatelessWidget {
   final int i;
@@ -132,38 +47,13 @@ class Shell extends StatelessWidget {
 
   @override
   Widget build(BuildContext c) {
-    Widget tile(IconData ic, String t, VoidCallback f) => ListTile(
-        leading: Icon(ic, color: sage),
-        title: Text(t),
-        onTap: () {
-          Navigator.pop(c);
-          f();
-        });
     return Scaffold(
-        appBar: brandAppBar(title: Text(titles[i], style: serif(22))),
-        drawer: Drawer(
-            child: ListView(padding: EdgeInsets.zero, children: [
-          DrawerHeader(
-              decoration: const BoxDecoration(color: sage),
-              child: Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Text('Hi, ${me!['full_name']}',
-                      style: serif(24).copyWith(color: Colors.white)))),
-          tile(Icons.grid_view_outlined, 'Today', () => c.go('/dashboard')),
-          tile(Icons.monitor_heart_outlined, 'Check-ins',
-              () => c.go('/check-in')),
-          tile(Icons.shield_outlined, 'Get support', () => c.go('/sos')),
-          tile(Icons.groups_outlined, 'Support Groups', () => c.go('/groups')),
-          tile(Icons.self_improvement, 'When an urge shows up',
-              () => c.go('/tools')),
-          tile(Icons.assignment_outlined, 'Coping plan',
-              () => c.go('/blueprint', extra: routes[i])),
-          const Divider(),
-          tile(Icons.description_outlined, 'Generate report',
-              () => reportSheet(c)),
-          tile(Icons.settings_outlined, 'Settings', () => c.go('/settings')),
-          tile(Icons.logout, 'Sign out', () => signOut(c)),
-        ])),
+        appBar: brandAppBar(
+            title: Text(titles[i], style: serif(22)), showDrawerMenu: true),
+        drawer: AppDrawer(
+          pageContext: c,
+          onGenerateReport: () => reportSheet(c),
+        ),
         body: SafeArea(child: pages[i]),
         bottomNavigationBar: NavigationBar(
             backgroundColor: Colors.white,
@@ -975,7 +865,12 @@ class _ToolsState extends State<ToolsPage> {
                     : 'Breathe out';
     final left = el < 0 ? 900 : 900 - el;
     return Scaffold(
-        appBar: brandAppBar(onBack: () => c.go('/dashboard')),
+        appBar:
+            brandAppBar(onBack: () => c.go('/dashboard'), showDrawerMenu: true),
+        drawer: AppDrawer(
+          pageContext: c,
+          onGenerateReport: () => reportSheet(c),
+        ),
         body: ListView(padding: const EdgeInsets.all(20), children: [
           head('', 'When an urge shows up',
               'This moment is temporary. Explore a tool, check in with yourself, or simply take a breath.'),
@@ -1125,7 +1020,7 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsState();
 }
 
-class _SettingsState extends State<SettingsPage> {
+class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   DateTime? when =
       DateTime.tryParse('${me!['recovery_start_date'] ?? ''}')?.toLocal();
   String? goal;
@@ -1136,6 +1031,10 @@ class _SettingsState extends State<SettingsPage> {
   bool riskyReminderEnabled = false;
   bool reminderSettingsLoading = true;
   bool reminderSettingsSaving = false;
+  bool reminderDiagnosticsLoading = true;
+  bool notificationsPermissionAllowed = false;
+  bool exactAlarmsAllowed = false;
+  int scheduledReminders = 0;
   TimeOfDay dailyReminderTime = const TimeOfDay(hour: 20, minute: 0);
   static const goals = [
     'Recover from alcohol addiction',
@@ -1145,7 +1044,9 @@ class _SettingsState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadReminderSettings();
+    _loadReminderDiagnostics();
     goal = switch (me!['recovery_goal']) {
       'Alcohol' => goals[0],
       'Drugs' => goals[1],
@@ -1164,30 +1065,40 @@ class _SettingsState extends State<SettingsPage> {
     }();
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    money.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshRemindersAndDiagnostics());
+    }
+  }
+
+  Future<void> _refreshRemindersAndDiagnostics() async {
+    try {
+      await ReminderService.refreshForUser('${me!['id']}');
+    } catch (e) {
+      if (mounted) snack(context, 'Could not refresh reminders: $e');
+    }
+    if (!mounted) return;
+    await _loadReminderDiagnostics();
+  }
+
   Future<void> _loadReminderSettings() async {
     try {
       final userId = '${me!['id']}';
       final daily = await ReminderService.dailyEnabled(userId);
       final risky = await ReminderService.riskyEnabled(userId);
       final minute = await ReminderService.dailyMinuteOfDay(userId);
-      final permissionGranted = !ReminderService.isSupported ||
-          await ReminderService.notificationsEnabled();
-      if ((daily || risky) && !permissionGranted) {
-        await ReminderService.saveSettings(
-          userId: userId,
-          dailyReminderEnabled: false,
-          riskyReminderEnabled: false,
-          dailyReminderMinute: minute,
-        );
-        if (mounted) {
-          snack(context,
-              'Notifications are off, so reminders have been turned off.');
-        }
-      }
       if (!mounted) return;
       setState(() {
-        dailyReminderEnabled = permissionGranted && daily;
-        riskyReminderEnabled = permissionGranted && risky;
+        dailyReminderEnabled = daily;
+        riskyReminderEnabled = risky;
         dailyReminderTime = TimeOfDay(hour: minute ~/ 60, minute: minute % 60);
         reminderSettingsLoading = false;
       });
@@ -1196,6 +1107,65 @@ class _SettingsState extends State<SettingsPage> {
         setState(() => reminderSettingsLoading = false);
         snack(context, 'Could not load reminder settings: $e');
       }
+    }
+  }
+
+  Future<void> _loadReminderDiagnostics() async {
+    if (mounted) {
+      setState(() {
+        reminderDiagnosticsLoading = true;
+      });
+    }
+    try {
+      final notificationsAllowed = ReminderService.isSupported &&
+          await ReminderService.notificationsEnabled();
+      final exactAllowed = ReminderService.isSupported &&
+          await ReminderService.exactAlarmsEnabled();
+      final count = await ReminderService.scheduledReminderCount();
+      if (!mounted) return;
+      setState(() {
+        notificationsPermissionAllowed = notificationsAllowed;
+        exactAlarmsAllowed = exactAllowed;
+        scheduledReminders = count;
+        reminderDiagnosticsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        reminderDiagnosticsLoading = false;
+      });
+      snack(context, 'Could not check reminder status: $e');
+    }
+  }
+
+  Future<void> _sendTestNotification() async {
+    try {
+      await ReminderService.sendTestNotificationNow();
+      if (!mounted) return;
+      snack(context, 'Test notification sent.');
+      await _loadReminderDiagnostics();
+    } catch (e) {
+      if (mounted) snack(context, 'Could not send test notification: $e');
+    }
+  }
+
+  Future<void> _scheduleTestNotification() async {
+    try {
+      await ReminderService.scheduleTestNotificationInOneMinute();
+      if (!mounted) return;
+      snack(context, 'Test notification scheduled for one minute from now.');
+      await _loadReminderDiagnostics();
+    } catch (e) {
+      if (mounted) snack(context, 'Could not schedule test notification: $e');
+    }
+  }
+
+  Future<void> _openPhoneSettings() async {
+    try {
+      await ReminderService.openPhoneSettings();
+      if (mounted) snack(context, 'Phone notification settings opened.');
+    } catch (e) {
+      if (mounted) snack(context, 'Could not open phone settings: $e');
     }
   }
 
@@ -1223,9 +1193,11 @@ class _SettingsState extends State<SettingsPage> {
         dailyReminderTime = nextDailyTime;
       });
       snack(context, 'Reminder settings saved.');
+      await _loadReminderDiagnostics();
     } catch (e) {
       if (mounted) {
         await _loadReminderSettings();
+        if (!mounted) return;
         final message =
             e is StateError ? e.message : 'Could not update reminders: $e';
         snack(context, '$message');
@@ -1254,7 +1226,7 @@ class _SettingsState extends State<SettingsPage> {
     final t = await showTimePicker(
         context: context,
         initialTime: TimeOfDay.fromDateTime(when ?? DateTime.now()));
-    if (t != null)
+    if (t != null && mounted)
       setState(() => when = DateTime(d.year, d.month, d.day, t.hour, t.minute));
   }
 
@@ -1275,7 +1247,12 @@ class _SettingsState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext c) => Scaffold(
-      appBar: brandAppBar(onBack: () => c.go('/dashboard')),
+      appBar:
+          brandAppBar(onBack: () => c.go('/dashboard'), showDrawerMenu: true),
+      drawer: AppDrawer(
+        pageContext: c,
+        onGenerateReport: () => reportSheet(c),
+      ),
       body: ListView(padding: const EdgeInsets.all(20), children: [
         head('Your space', 'Settings',
             'Make this feel right for you. You can change these whenever you like.'),
@@ -1312,6 +1289,33 @@ class _SettingsState extends State<SettingsPage> {
                 child: Center(child: CircularProgressIndicator()),
               )
             else ...[
+              const SizedBox(height: 8),
+              _reminderStatus(
+                'Notifications permission',
+                !ReminderService.isSupported
+                    ? 'Not available on this platform'
+                    : reminderDiagnosticsLoading
+                        ? 'Checking...'
+                        : notificationsPermissionAllowed
+                            ? 'Allowed'
+                            : 'Blocked',
+              ),
+              _reminderStatus(
+                'Exact alarms',
+                !ReminderService.isSupported
+                    ? 'Not available on this platform'
+                    : reminderDiagnosticsLoading
+                        ? 'Checking...'
+                        : exactAlarmsAllowed
+                            ? 'Allowed'
+                            : 'Not allowed (reminders use inexact timing)',
+              ),
+              _reminderStatus(
+                'Scheduled reminders',
+                reminderDiagnosticsLoading
+                    ? 'Checking...'
+                    : '$scheduledReminders',
+              ),
               const SizedBox(height: 8),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -1351,6 +1355,30 @@ class _SettingsState extends State<SettingsPage> {
                 ),
               if (reminderSettingsSaving)
                 const LinearProgressIndicator(minHeight: 2),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed:
+                    ReminderService.isSupported ? _sendTestNotification : null,
+                icon: const Icon(Icons.notifications_active_outlined),
+                label: const Text('Send test notification now'),
+              ),
+              OutlinedButton.icon(
+                onPressed: ReminderService.isSupported
+                    ? _scheduleTestNotification
+                    : null,
+                icon: const Icon(Icons.schedule),
+                label: const Text('Test in 1 minute'),
+              ),
+              TextButton.icon(
+                onPressed:
+                    ReminderService.isSupported ? _openPhoneSettings : null,
+                icon: const Icon(Icons.settings_outlined),
+                label: const Text('Open phone settings'),
+              ),
+              const Text(
+                'For reliable reminders, allow Notifications and Alarms & reminders, and set battery usage to Unrestricted for SteadyRecovery.',
+                style: TextStyle(color: muted, fontSize: 12),
+              ),
             ],
           ],
         )),
@@ -1407,4 +1435,21 @@ class _SettingsState extends State<SettingsPage> {
           FilledButton(onPressed: _save, child: const Text('Set up my clock')),
         ])),
       ]));
+
+  Widget _reminderStatus(String label, String value) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            Expanded(child: Text(label)),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                value,
+                textAlign: TextAlign.end,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      );
 }
