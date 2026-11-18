@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.steadyrecovery.steady_recovery"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
