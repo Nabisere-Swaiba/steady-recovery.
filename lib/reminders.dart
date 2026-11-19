@@ -78,7 +78,7 @@ class ReminderService {
     if (!isSupported || _initialized) return;
 
     tz_data.initializeTimeZones();
-    tz.setLocalLocation(tz.getLocation('Africa/Kampala'));
+    tz.setLocalLocation(tz.getLocation('Africa/Nairobi'));
 
     const initializationSettings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
